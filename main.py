@@ -18,6 +18,12 @@ def extract_video_links(html: str) -> list[str]:
     return re.findall(pattern, html)
 
 
+def extract_video_id(html: str) -> str | None:
+    """Get the video id from pageContext."""
+    match = re.search(r"videoId:\s*'(\d+)'", html)
+    return match.group(1) if match else None
+
+
 # -----------------------------
 # Pagination count
 # -----------------------------
@@ -32,12 +38,15 @@ def extract_page_count(html: str, artist_url: str) -> int:
 # -----------------------------
 # MP4 link extraction
 # -----------------------------
-def extract_mp4_links(page: Page, url: str, delay_ms: int = 1000) -> list[str]:
-    """Get unique downloadable .mp4 URLs from the page."""
+def extract_mp4_links(
+    page: Page, url: str, delay_ms: int = 1000
+) -> tuple[list[str], str | None]:
+    """Get unique downloadable .mp4 URLs and video id from the page."""
     page.goto(url)
     page.wait_for_timeout(delay_ms)
 
     raw_html = html.unescape(page.content())
+    video_id = extract_video_id(raw_html)
     urls = re.findall(r"https?://[^\s'\"]+\.mp4[^\s'\"]*", raw_html)
 
     unique_by_file: dict[str, str] = {}
@@ -61,7 +70,7 @@ def extract_mp4_links(page: Page, url: str, delay_ms: int = 1000) -> list[str]:
         file_name = match.group(1)
         unique_by_file[file_name] = mp4_url
 
-    return list(unique_by_file.values())
+    return list(unique_by_file.values()), video_id
 
 
 def get_best_quality_mp4(urls: list[str]) -> str | None:
@@ -138,9 +147,7 @@ def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]
     print(f"Found {page_count} page(s)")
 
     cookies = page.context.cookies()
-
     save_cookies_netscape(cookies, "cookies.txt")
-
     print("Saved cookies to cookies.txt")
 
     counter = 1
@@ -174,7 +181,8 @@ def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]
 
 # --------- Main ---------
 if __name__ == "__main__":
-    artist_url = "https://pimpbunny.com/onlyfans-models/ruth-lee-leaks/"
+    # artist_url = "https://pimpbunny.com/onlyfans-models/ruth-lee-leaks/"
+    artist_url = "https://pimpbunny.com/onlyfans-models/hannah-owo-exclusive-leaks/"
     artist_slug = artist_url.rstrip("/").split("/")[-1]
     output_file = f"{artist_slug}.txt"
 
@@ -183,37 +191,38 @@ if __name__ == "__main__":
         page = browser.new_page()
 
         video_links = list(dict.fromkeys(scrape_artist(page, artist_url)))
-        best_links: list[str] = []
+        rows: list[tuple[str, str]] = []
 
-        for link in video_links:
-            mp4_urls = extract_mp4_links(page, link, delay_ms=1000)
+        for index, link in enumerate(video_links, start=1):
+            mp4_urls, video_id = extract_mp4_links(page, link, delay_ms=1000)
             best_mp4 = get_best_quality_mp4(mp4_urls)
 
-            print(
-                f"\n=== [{video_links.index(link) + 1}/{len(video_links)}] Video page: {link} ==="
-            )
+            print(f"\n=== [{index}/{len(video_links)}] Video page: {link} ===")
+            print(f"Video ID: {video_id}")
             print(f"MP4 URLs: {mp4_urls}")
             print(f"Best MP4: {best_mp4}")
 
             if best_mp4:
-                stream_url = page.goto(
+                stream_response = page.goto(
                     best_mp4.replace("download=true", "download=false")
                 )
 
                 page.wait_for_timeout(1000)
-                best_links.append(stream_url.url if stream_url else best_mp4)
+                stream_url = stream_response.url if stream_response else best_mp4
 
-                print("Stream URL:", stream_url.url if stream_url else "No stream URL")
+                rows.append((video_id or "", stream_url))
+
+                print("Stream URL:", stream_url)
 
             print("-----------------------------")
 
-        best_links = list(dict.fromkeys(best_links))
+        rows = list(dict.fromkeys(rows))
 
         with open(output_file, "w", encoding="utf-8") as file:
-            file.write("\n".join(best_links))
-            file.write("\n")
+            for video_id, stream_url in rows:
+                file.write(f"{video_id}\t{stream_url}\n")
 
-        print(f"\nSaved {len(best_links)} links to {output_file}")
+        print(f"\nSaved {len(rows)} rows to {output_file}")
 
         input("\nPress Enter to close the browser...")
         browser.close()
