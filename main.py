@@ -146,6 +146,9 @@ def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]
 
     print(f"Found {page_count} page(s)")
 
+    user_agent = page.evaluate("() => navigator.userAgent")
+    print(user_agent)
+
     cookies = page.context.cookies()
     save_cookies_netscape(cookies, "cookies.txt")
     print("Saved cookies to cookies.txt")
@@ -187,7 +190,7 @@ if __name__ == "__main__":
     output_file = f"{artist_slug}.txt"
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=False, args=["--mute-audio"])
         page = browser.new_page()
 
         video_links = list(dict.fromkeys(scrape_artist(page, artist_url)))

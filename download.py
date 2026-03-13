@@ -55,6 +55,7 @@ def read_video_rows(path: str) -> list[tuple[str, str]]:
 cf_clearance = get_cf_clearance()
 rows = read_video_rows("hannah-owo-exclusive-leaks.txt")
 
+# Note: Cookie is not enough as its hashed with the User-Agent so the same User-Agent must be the same when downloading
 for video_id, stream_url in rows:
     command = [
         "curl",
