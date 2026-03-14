@@ -198,22 +198,75 @@ def scrape_artist(
     return all_links, artist_name
 
 
+def load_netscape_cookies(path: str) -> list[dict]:
+    """Load cookies from a Netscape cookie file."""
+    cookies: list[dict] = []
+
+    with open(path, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+
+            if not line or line.startswith("#"):
+                continue
+
+            parts = line.split("\t")
+            if len(parts) < 7:
+                continue
+
+            domain, _subdomains, cookie_path, secure, expires, name, value = parts[:7]
+
+            cookie = {
+                "name": name,
+                "value": value,
+                "domain": domain,
+                "path": cookie_path,
+                "secure": secure == "TRUE",
+            }
+
+            if expires.isdigit():
+                cookie["expires"] = int(expires)
+
+            cookies.append(cookie)
+
+    return cookies
+
+
 # --------- Main ---------
 if __name__ == "__main__":
     artist_list_file = "artists.txt"
 
     with open(artist_list_file, "r", encoding="utf-8") as file:
-        artist_urls = [line.strip() for line in file if line.strip()]
+        artist_urls = sorted(
+            {line.strip() for line in file if line.strip()},
+            key=str.lower,
+        )
+
+    with open(artist_list_file, "w", encoding="utf-8") as file:
+        for artist_url in artist_urls:
+            file.write(f"{artist_url}\n")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, args=["--mute-audio"])
-        page = browser.new_page()
+
+        if os.path.exists("cookies.txt"):
+            context = browser.new_context()
+            cookies = load_netscape_cookies("cookies.txt")
+            context.add_cookies(cookies)
+
+            page = context.new_page()
+        else:
+            page = browser.new_page()
 
         for artist_url in artist_urls:
             artist_slug = artist_url.rstrip("/").split("/")[-1]
 
             video_links, artist_name = scrape_artist(page, artist_url)
             video_links = list(dict.fromkeys(video_links))
+
+            print(artist_name)
+            if artist_name == "Page Not Found":
+                print(f"Skipping {artist_url} - Page Not Found")
+                continue
 
             output_dir = (artist_name or artist_slug).strip()
             output_file = f"artists/{output_dir}/_links.txt"
