@@ -52,6 +52,8 @@ def extract_mp4_links(page: Page, url: str) -> tuple[list[str], str | None]:
     """Get unique downloadable .mp4 URLs and video id from the page."""
     page.goto(url)
 
+    page.wait_for_timeout(500)
+
     raw_html = html.unescape(page.content())
     video_id = extract_video_id(raw_html)
     urls = re.findall(r"https?://[^\s'\"]+\.mp4[^\s'\"]*", raw_html)
@@ -148,6 +150,9 @@ def scrape_artist(
 
     first_url = f"{artist_url.rstrip('/')}/?videos_per_page={per_page}"
     page.goto(first_url)
+
+    # accept captcha manually if it appears
+    page.wait_for_timeout(5000)
 
     first_html = page.content()
     artist_name = extract_artist_name(first_html)
@@ -263,6 +268,9 @@ if __name__ == "__main__":
             page = browser.new_page()
 
         for artist_url in artist_urls:
+            if artist_url.startswith("#") or not artist_url.strip():
+                continue
+
             artist_slug = artist_url.rstrip("/").split("/")[-1]
 
             video_links, artist_name = scrape_artist(page, artist_url)
