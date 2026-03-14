@@ -1,11 +1,12 @@
+import os
 import subprocess
 
 # -----------------------------
 # Files
 # -----------------------------
+ARTISTS_DIR = "artists"
 COOKIE_FILE = "cookies.txt"
 USER_AGENT_FILE = "user_agent.txt"
-VIDEO_FILE = "hannah-owo-exclusive-leaks.txt"
 
 
 # -----------------------------
@@ -53,13 +54,13 @@ def read_video_rows(path: str) -> list[tuple[str, str]]:
             parts = line.split(None, 1)
 
             if len(parts) != 2:
-                print(f"Skipping bad line {line_number}: {line}")
+                print(f"Skipping bad line {line_number} in {path}: {line}")
                 continue
 
             video_id, stream_url = parts[0].strip(), parts[1].strip()
 
             if not video_id or not stream_url:
-                print(f"Skipping incomplete line {line_number}: {line}")
+                print(f"Skipping incomplete line {line_number} in {path}: {line}")
                 continue
 
             rows.append((video_id, stream_url))
@@ -68,10 +69,25 @@ def read_video_rows(path: str) -> list[tuple[str, str]]:
 
 
 # -----------------------------
+# Find link files
+# -----------------------------
+def find_link_files(root_dir: str) -> list[str]:
+    """Find all _links.txt files under the artists folder."""
+    link_files: list[str] = []
+
+    for current_root, _dirs, files in os.walk(root_dir):
+        for name in files:
+            if name == "_links.txt":
+                link_files.append(os.path.join(current_root, name))
+
+    return sorted(link_files)
+
+
+# -----------------------------
 # Build command
 # -----------------------------
 def build_curl_command(
-    video_id: str,
+    output_path: str,
     stream_url: str,
     user_agent: str,
     cf_clearance: str,
@@ -111,7 +127,7 @@ def build_curl_command(
         "-H",
         "TE: trailers",
         "-o",
-        f"{video_id}.mp4",
+        output_path,
     ]
 
 
@@ -119,7 +135,7 @@ def build_curl_command(
 # Main
 # -----------------------------
 def main() -> None:
-    """Download videos from saved rows."""
+    """Download videos from artist link files."""
     cf_clearance = get_cf_clearance()
     if not cf_clearance:
         raise RuntimeError("cf_clearance cookie not found")
@@ -128,25 +144,35 @@ def main() -> None:
     if not user_agent:
         raise RuntimeError("user_agent.txt is empty")
 
-    rows = read_video_rows(VIDEO_FILE)
-    total = len(rows)
+    link_files = find_link_files(ARTISTS_DIR)
+    if not link_files:
+        raise RuntimeError("No _links.txt files found")
 
-    for index, (video_id, stream_url) in enumerate(rows, start=1):
-        print(f"[{index}/{total}] Downloading {video_id}.mp4")
+    for link_file in link_files:
+        artist_dir = os.path.dirname(link_file)
+        artist_name = os.path.basename(artist_dir)
+        rows = read_video_rows(link_file)
+        total = len(rows)
 
-        command = build_curl_command(
-            video_id=video_id,
-            stream_url=stream_url,
-            user_agent=user_agent,
-            cf_clearance=cf_clearance,
-        )
+        print(f"\n########## {artist_name} ##########")
 
-        _result = subprocess.run(command, check=False)
+        for index, (video_id, stream_url) in enumerate(rows, start=1):
+            output_path = os.path.join(artist_dir, f"{video_id}.mp4")
 
-        # if _result.returncode == 0:
-        #    print(f"[{index}/{total}] Done {video_id}.mp4")
-        # else:
-        #    print(f"[{index}/{total}] Failed {video_id}.mp4")
+            if os.path.exists(output_path):
+                print(f"[{index}/{total}] Skipping {output_path}")
+                continue
+
+            print(f"[{index}/{total}] Downloading {output_path}")
+
+            command = build_curl_command(
+                output_path=output_path,
+                stream_url=stream_url,
+                user_agent=user_agent,
+                cf_clearance=cf_clearance,
+            )
+
+            subprocess.run(command, check=False)
 
 
 if __name__ == "__main__":
