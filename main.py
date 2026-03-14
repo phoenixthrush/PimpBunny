@@ -246,15 +246,15 @@ if __name__ == "__main__":
             file.write(f"{artist_url}\n")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--mute-audio"])
-
         if os.path.exists("cookies.txt"):
+            browser = p.chromium.launch(args=["--mute-audio"])
             context = browser.new_context()
             cookies = load_netscape_cookies("cookies.txt")
             context.add_cookies(cookies)
 
             page = context.new_page()
         else:
+            browser = p.chromium.launch(headless=False, args=["--mute-audio"])
             page = browser.new_page()
 
         for artist_url in artist_urls:
