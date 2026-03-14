@@ -256,7 +256,7 @@ if __name__ == "__main__":
                 "Just install Xvfb and run:\n"
                 "xvfb-run python main.py"
             )
-            raise
+            exit(1)
 
         if os.path.exists("cookies.txt"):
             context = browser.new_context()
