@@ -48,12 +48,9 @@ def extract_page_count(page_html: str, artist_url: str) -> int:
 # -----------------------------
 # MP4 link extraction
 # -----------------------------
-def extract_mp4_links(
-    page: Page, url: str, delay_ms: int = 1000
-) -> tuple[list[str], str | None]:
+def extract_mp4_links(page: Page, url: str) -> tuple[list[str], str | None]:
     """Get unique downloadable .mp4 URLs and video id from the page."""
     page.goto(url)
-    page.wait_for_timeout(delay_ms)
 
     raw_html = html.unescape(page.content())
     video_id = extract_video_id(raw_html)
@@ -151,7 +148,6 @@ def scrape_artist(
 
     first_url = f"{artist_url.rstrip('/')}/?videos_per_page={per_page}"
     page.goto(first_url)
-    page.wait_for_timeout(10000)
 
     first_html = page.content()
     artist_name = extract_artist_name(first_html)
@@ -181,7 +177,6 @@ def scrape_artist(
                 f"{artist_url.rstrip('/')}/{page_num}/?videos_per_page={per_page}"
             )
             page.goto(page_url)
-            page.wait_for_timeout(1000)
             page_html = page.content()
 
         page_links = extract_video_links(page_html)
@@ -288,7 +283,7 @@ if __name__ == "__main__":
             rows: list[tuple[str, str]] = []
 
             for index, link in enumerate(video_links, start=1):
-                mp4_urls, video_id = extract_mp4_links(page, link, delay_ms=1000)
+                mp4_urls, video_id = extract_mp4_links(page, link)
                 best_mp4 = get_best_quality_mp4(mp4_urls)
 
                 print(f"\n=== [{index}/{len(video_links)}] Video page: {link} ===")
@@ -301,7 +296,6 @@ if __name__ == "__main__":
                         best_mp4.replace("download=true", "download=false")
                     )
 
-                    page.wait_for_timeout(1000)
                     stream_url = stream_response.url if stream_response else best_mp4
 
                     rows.append((video_id or "", stream_url))
