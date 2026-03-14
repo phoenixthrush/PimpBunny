@@ -206,5 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+artists/
+artists.txt
 cookies.txt
 user_agent.txt

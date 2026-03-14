@@ -4,6 +4,7 @@ Sequential numbering across pages
 """
 
 import html
+import os
 import re
 
 from patchright.sync_api import Page, sync_playwright
@@ -12,26 +13,35 @@ from patchright.sync_api import Page, sync_playwright
 # -----------------------------
 # Video links
 # -----------------------------
-def extract_video_links(html: str) -> list[str]:
+def extract_video_links(page_html: str) -> list[str]:
     """Get all video links from a page."""
     pattern = r'<a[^>]+class="[^"]*ui-card-link[^"]*"[^>]+href="([^"]+)"'
-    return re.findall(pattern, html)
+    return re.findall(pattern, page_html)
 
 
-def extract_video_id(html: str) -> str | None:
+def extract_video_id(page_html: str) -> str | None:
     """Get the video id from pageContext."""
-    match = re.search(r"videoId:\s*'(\d+)'", html)
+    match = re.search(r"videoId:\s*'(\d+)'", page_html)
     return match.group(1) if match else None
+
+
+def extract_artist_name(page_html: str) -> str | None:
+    """Get the artist name from the page heading."""
+    match = re.search(r"<h1[^>]*>(.*?)</h1>", page_html, re.DOTALL)
+    if not match:
+        return None
+
+    return html.unescape(match.group(1)).strip()
 
 
 # -----------------------------
 # Pagination count
 # -----------------------------
-def extract_page_count(html: str, artist_url: str) -> int:
+def extract_page_count(page_html: str, artist_url: str) -> int:
     """Get max page number from pagination."""
     artist_base = artist_url.rstrip("/").split("/")[-1]
     pattern = rf'href="[^"]*{artist_base}/(\d+)(?:/)?(?:\?[^"]*)?"[^>]*>(\d+)</a>'
-    nums = [int(num) for _, num in re.findall(pattern, html)]
+    nums = [int(num) for _, num in re.findall(pattern, page_html)]
     return max(nums) if nums else 1
 
 
@@ -133,7 +143,9 @@ def save_cookies_netscape(cookies: list[dict], path: str) -> None:
 # -----------------------------
 # Scraping
 # -----------------------------
-def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]:
+def scrape_artist(
+    page: Page, artist_url: str, per_page: int = 128
+) -> tuple[list[str], str | None]:
     """Scrape all video links for one artist."""
     all_links: list[str] = []
 
@@ -142,6 +154,7 @@ def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]
     page.wait_for_timeout(10000)
 
     first_html = page.content()
+    artist_name = extract_artist_name(first_html)
     page_count = extract_page_count(first_html, artist_url)
 
     print(f"Found {page_count} page(s)")
@@ -182,53 +195,65 @@ def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]
             all_links.append(href)
             counter += 1
 
-    return all_links
+    return all_links, artist_name
 
 
 # --------- Main ---------
 if __name__ == "__main__":
-    # artist_url = "https://pimpbunny.com/onlyfans-models/ruth-lee-leaks/"
-    artist_url = "https://pimpbunny.com/onlyfans-models/hannah-owo-exclusive-leaks/"
-    artist_slug = artist_url.rstrip("/").split("/")[-1]
-    output_file = f"{artist_slug}.txt"
+    artist_list_file = "artists.txt"
+
+    with open(artist_list_file, "r", encoding="utf-8") as file:
+        artist_urls = [line.strip() for line in file if line.strip()]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, args=["--mute-audio"])
         page = browser.new_page()
 
-        video_links = list(dict.fromkeys(scrape_artist(page, artist_url)))
-        rows: list[tuple[str, str]] = []
+        for artist_url in artist_urls:
+            artist_slug = artist_url.rstrip("/").split("/")[-1]
 
-        for index, link in enumerate(video_links, start=1):
-            mp4_urls, video_id = extract_mp4_links(page, link, delay_ms=1000)
-            best_mp4 = get_best_quality_mp4(mp4_urls)
+            video_links, artist_name = scrape_artist(page, artist_url)
+            video_links = list(dict.fromkeys(video_links))
 
-            print(f"\n=== [{index}/{len(video_links)}] Video page: {link} ===")
-            print(f"Video ID: {video_id}")
-            print(f"MP4 URLs: {mp4_urls}")
-            print(f"Best MP4: {best_mp4}")
+            output_dir = (artist_name or artist_slug).strip()
+            output_file = f"artists/{output_dir}/_links.txt"
 
-            if best_mp4:
-                stream_response = page.goto(
-                    best_mp4.replace("download=true", "download=false")
-                )
+            os.makedirs(f"artists/{output_dir}", exist_ok=True)
 
-                page.wait_for_timeout(1000)
-                stream_url = stream_response.url if stream_response else best_mp4
+            print(f"\n########## {output_dir} ##########")
 
-                rows.append((video_id or "", stream_url))
+            rows: list[tuple[str, str]] = []
 
-                print("Stream URL:", stream_url)
+            for index, link in enumerate(video_links, start=1):
+                mp4_urls, video_id = extract_mp4_links(page, link, delay_ms=1000)
+                best_mp4 = get_best_quality_mp4(mp4_urls)
 
-            print("-----------------------------")
+                print(f"\n=== [{index}/{len(video_links)}] Video page: {link} ===")
+                print(f"Video ID: {video_id}")
+                print(f"MP4 URLs: {mp4_urls}")
+                print(f"Best MP4: {best_mp4}")
 
-        rows = list(dict.fromkeys(rows))
+                if best_mp4:
+                    stream_response = page.goto(
+                        best_mp4.replace("download=true", "download=false")
+                    )
 
-        with open(output_file, "w", encoding="utf-8") as file:
-            for video_id, stream_url in rows:
-                file.write(f"{video_id}\t{stream_url}\n")
+                    page.wait_for_timeout(1000)
+                    stream_url = stream_response.url if stream_response else best_mp4
 
-        print(f"\nSaved {len(rows)} rows to {output_file}")
+                    rows.append((video_id or "", stream_url))
 
-        input("\nPress Enter to close the browser...")
+                    print("Stream URL:", stream_url)
+
+                print("-----------------------------")
+
+            rows = list(dict.fromkeys(rows))
+
+            with open(output_file, "w", encoding="utf-8") as file:
+                for video_id, stream_url in rows:
+                    file.write(f"{video_id}\t{stream_url}\n")
+
+            print(f"\nSaved {len(rows)} rows to {output_file}")
+
+        # input("\nPress Enter to close the browser...")
         browser.close()
