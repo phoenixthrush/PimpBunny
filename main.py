@@ -246,13 +246,17 @@ if __name__ == "__main__":
             file.write(f"{artist_url}\n")
 
     with sync_playwright() as p:
-        # loading cookies that manually passed the captcha does work for bypassing cloudflare
-        # it just still does not work in normal headless mode, even if no captcha is shown
-        # it does work headless when using a virtual x display like xvfb-run :)
-        #
-        # just install xvfb and run:
-        # xvfb-run python main.py
-        browser = p.chromium.launch(headless=False, args=["--mute-audio"])
+        try:
+            browser = p.chromium.launch(headless=False, args=["--mute-audio"])
+        except Exception:
+            print(
+                "Loading cookies that manually passed the captcha does work for bypassing Cloudflare.\n"
+                "It just still does not work in normal headless mode, even if no captcha is shown.\n"
+                "It does work headless when using a virtual X display like xvfb-run :)\n\n"
+                "Just install Xvfb and run:\n"
+                "xvfb-run python main.py"
+            )
+            raise
 
         if os.path.exists("cookies.txt"):
             context = browser.new_context()
