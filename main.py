@@ -6,8 +6,11 @@ Sequential numbering across pages
 import html
 import os
 import re
+import subprocess
 
 from patchright.sync_api import Page, sync_playwright
+
+from download import build_curl_command, get_cf_clearance
 
 
 # -----------------------------
@@ -267,6 +270,9 @@ if __name__ == "__main__":
         else:
             page = browser.new_page()
 
+        user_agent = page.evaluate("() => navigator.userAgent")
+        cf_clearance = get_cf_clearance()
+
         for artist_url in artist_urls:
             if artist_url.startswith("#") or not artist_url.strip():
                 continue
@@ -309,6 +315,15 @@ if __name__ == "__main__":
                     rows.append((video_id or "", stream_url))
 
                     print("Stream URL:", stream_url)
+
+                    command = build_curl_command(
+                        output_path=f"artists/{output_dir}/{video_id}.mp4",
+                        stream_url=stream_url,
+                        user_agent=user_agent,
+                        cf_clearance=cf_clearance,
+                    )
+
+                    subprocess.run(command, check=False)
 
                 print("-----------------------------")
 
