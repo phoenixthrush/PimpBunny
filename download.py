@@ -1,10 +1,17 @@
 import subprocess
 
+# -----------------------------
+# Files
+# -----------------------------
+COOKIE_FILE = "cookies.txt"
+USER_AGENT_FILE = "user_agent.txt"
+VIDEO_FILE = "hannah-owo-exclusive-leaks.txt"
+
 
 # -----------------------------
 # Read cookie
 # -----------------------------
-def get_cf_clearance(path: str = "cookies.txt") -> str | None:
+def get_cf_clearance(path: str = COOKIE_FILE) -> str | None:
     """Get the cf_clearance cookie value."""
     with open(path, "r", encoding="utf-8") as file:
         for line in file:
@@ -14,11 +21,19 @@ def get_cf_clearance(path: str = "cookies.txt") -> str | None:
                 continue
 
             parts = line.split("\t")
-
             if len(parts) >= 7 and parts[5] == "cf_clearance":
                 return parts[6]
 
     return None
+
+
+# -----------------------------
+# Read text
+# -----------------------------
+def read_text(path: str) -> str:
+    """Read a text file."""
+    with open(path, "r", encoding="utf-8") as file:
+        return file.read().strip()
 
 
 # -----------------------------
@@ -30,9 +45,9 @@ def read_video_rows(path: str) -> list[tuple[str, str]]:
 
     with open(path, "r", encoding="utf-8") as file:
         for line_number, line in enumerate(file, start=1):
-            line = line.rstrip("\n")
+            line = line.strip()
 
-            if not line.strip():
+            if not line:
                 continue
 
             parts = line.split(None, 1)
@@ -52,16 +67,21 @@ def read_video_rows(path: str) -> list[tuple[str, str]]:
     return rows
 
 
-cf_clearance = get_cf_clearance()
-rows = read_video_rows("hannah-owo-exclusive-leaks.txt")
-
-# Note: Cookie is not enough as its hashed with the User-Agent so the same User-Agent must be the same when downloading
-for video_id, stream_url in rows:
-    command = [
+# -----------------------------
+# Build command
+# -----------------------------
+def build_curl_command(
+    video_id: str,
+    stream_url: str,
+    user_agent: str,
+    cf_clearance: str,
+) -> list[str]:
+    """Build the curl command."""
+    return [
         "curl",
         stream_url,
         "-H",
-        "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:148.0) Gecko/20100101 Firefox/148.0",
+        f"User-Agent: {user_agent}",
         "-H",
         "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "-H",
@@ -94,6 +114,40 @@ for video_id, stream_url in rows:
         f"{video_id}.mp4",
     ]
 
-    subprocess.run(command, check=False)
 
-    print(f"Ran: {' '.join(subprocess.list2cmdline([arg]) for arg in command)}")
+# -----------------------------
+# Main
+# -----------------------------
+def main() -> None:
+    """Download videos from saved rows."""
+    cf_clearance = get_cf_clearance()
+    if not cf_clearance:
+        raise RuntimeError("cf_clearance cookie not found")
+
+    user_agent = read_text(USER_AGENT_FILE)
+    if not user_agent:
+        raise RuntimeError("user_agent.txt is empty")
+
+    rows = read_video_rows(VIDEO_FILE)
+    total = len(rows)
+
+    for index, (video_id, stream_url) in enumerate(rows, start=1):
+        print(f"[{index}/{total}] Downloading {video_id}.mp4")
+
+        command = build_curl_command(
+            video_id=video_id,
+            stream_url=stream_url,
+            user_agent=user_agent,
+            cf_clearance=cf_clearance,
+        )
+
+        _result = subprocess.run(command, check=False)
+
+        # if _result.returncode == 0:
+        #    print(f"[{index}/{total}] Done {video_id}.mp4")
+        # else:
+        #    print(f"[{index}/{total}] Failed {video_id}.mp4")
+
+
+if __name__ == "__main__":
+    main()

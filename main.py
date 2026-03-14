@@ -147,7 +147,10 @@ def scrape_artist(page: Page, artist_url: str, per_page: int = 128) -> list[str]
     print(f"Found {page_count} page(s)")
 
     user_agent = page.evaluate("() => navigator.userAgent")
-    print(user_agent)
+
+    with open("user_agent.txt", "w", encoding="utf-8") as ua_file:
+        ua_file.write(user_agent)
+        print("Saved user agent to user_agent.txt")
 
     cookies = page.context.cookies()
     save_cookies_netscape(cookies, "cookies.txt")
