@@ -310,6 +310,121 @@ if __name__ == "__main__":
                         best_mp4.replace("download=true", "download=false")
                     )
 
+                    page.goto("about:blank")
+                    page.set_content(f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PimpBunny Downloader</title>
+    <style>
+        * {{
+            box-sizing: border-box;
+        }}
+
+        body {{
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            font-family: Arial, sans-serif;
+            color: white;
+            background:
+                radial-gradient(circle at top left, #ff9ad5 0%, transparent 35%),
+                radial-gradient(circle at top right, #c084fc 0%, transparent 30%),
+                radial-gradient(circle at bottom, #7c3aed 0%, transparent 40%),
+                linear-gradient(135deg, #1f1135 0%, #3b185f 45%, #6d28d9 100%);
+        }}
+
+        .card {{
+            width: 100%;
+            max-width: 760px;
+            padding: 40px 32px;
+            border-radius: 24px;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.10);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            box-shadow: 0 20px 80px rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(14px);
+        }}
+
+        .spinner {{
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 24px;
+            border-radius: 50%;
+            border: 6px solid rgba(255, 255, 255, 0.18);
+            border-top-color: #ffd0ec;
+            border-right-color: #f9a8d4;
+            animation: spin 1s linear infinite;
+        }}
+
+        h1 {{
+            margin: 0 0 12px;
+            font-size: 42px;
+            line-height: 1.1;
+        }}
+
+        .subtitle {{
+            margin: 0 0 24px;
+            font-size: 18px;
+            color: #f5d0fe;
+        }}
+
+        .link {{
+            display: inline-block;
+            max-width: 100%;
+            padding: 14px 18px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.12);
+            color: #fff7fb;
+            font-size: 15px;
+            line-height: 1.5;
+            word-break: break-word;
+            overflow-wrap: anywhere;
+        }}
+
+        .repo-link {{
+            position: fixed;
+            right: 14px;
+            bottom: 10px;
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.45);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }}
+
+        .repo-link:hover {{
+            color: rgba(255, 255, 255, 0.72);
+        }}
+
+        @keyframes spin {{
+            to {{
+                transform: rotate(360deg);
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="spinner"></div>
+        <h1>PimpBunny Downloader</h1>
+        <p class="subtitle">currently downloading your file...</p>
+        <div class="link">{html.escape(link)}</div>
+    </div>
+
+    <a
+        class="repo-link"
+        href="https://github.com/phoenixthrush/PimpBunny"
+        target="_blank"
+    >
+        @phoenixthrush/PimpBunny
+    </a>
+</body>
+</html>""")
+
                     stream_url = stream_response.url if stream_response else best_mp4
 
                     rows.append((video_id or "", stream_url))
