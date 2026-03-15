@@ -154,8 +154,10 @@ def scrape_artist(
     first_url = f"{artist_url.rstrip('/')}/?videos_per_page={per_page}"
     page.goto(first_url)
 
-    # accept captcha manually if it appears
-    page.wait_for_timeout(5000)
+    for _ in range(10):
+        if "<title>Just a moment...</title>" in page.content():
+            print("Cloudflare protection detected, waiting 5 seconds...")
+            page.wait_for_timeout(5000)
 
     first_html = page.content()
     artist_name = extract_artist_name(first_html)
@@ -271,7 +273,6 @@ if __name__ == "__main__":
             page = browser.new_page()
 
         user_agent = page.evaluate("() => navigator.userAgent")
-        cf_clearance = get_cf_clearance()
 
         for artist_url in artist_urls:
             if artist_url.startswith("#") or not artist_url.strip():
@@ -282,7 +283,6 @@ if __name__ == "__main__":
             video_links, artist_name = scrape_artist(page, artist_url)
             video_links = list(dict.fromkeys(video_links))
 
-            print(artist_name)
             if artist_name == "Page Not Found":
                 print(f"Skipping {artist_url} - Page Not Found")
                 continue
@@ -435,7 +435,7 @@ if __name__ == "__main__":
                         output_path=f"artists/{output_dir}/{video_id}.mp4",
                         stream_url=stream_url,
                         user_agent=user_agent,
-                        cf_clearance=cf_clearance,
+                        cf_clearance=get_cf_clearance(),
                     )
 
                     subprocess.run(command, check=False)
