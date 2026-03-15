@@ -8,8 +8,9 @@ import os
 import re
 import subprocess
 
-from download import build_curl_command, get_cf_clearance
 from patchright.sync_api import Page, sync_playwright
+
+from download import build_curl_command, get_cf_clearance
 
 
 # -----------------------------
@@ -311,6 +312,13 @@ if __name__ == "__main__":
 
                 print(f"\n=== [{index}/{len(video_links)}] Video page: {link} ===")
                 print(f"Video ID: {video_id}")
+
+                output = f"artists/{output_dir}/{video_id}.mp4"
+
+                if os.path.exists(output):
+                    print(f"File already exists: {output}")
+                    continue
+
                 print(f"MP4 URLs: {mp4_urls}")
                 print(f"Best MP4: {best_mp4}")
 
@@ -446,12 +454,6 @@ if __name__ == "__main__":
                     rows.append((video_id or "", stream_url))
 
                     print("Stream URL:", stream_url)
-
-                    output = f"artists/{output_dir}/{video_id}.mp4"
-
-                    if os.path.exists(output):
-                        print(f"File already exists: {output}")
-                        continue
 
                     command = build_curl_command(
                         output_path=output,
