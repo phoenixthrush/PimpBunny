@@ -8,9 +8,8 @@ import os
 import re
 import subprocess
 
-from patchright.sync_api import Page, sync_playwright
-
 from download import build_curl_command, get_cf_clearance
+from patchright.sync_api import Page, sync_playwright
 
 
 # -----------------------------
@@ -448,8 +447,14 @@ if __name__ == "__main__":
 
                     print("Stream URL:", stream_url)
 
+                    output = f"artists/{output_dir}/{video_id}.mp4"
+
+                    if os.path.exists(output):
+                        print(f"File already exists: {output}")
+                        continue
+
                     command = build_curl_command(
-                        output_path=f"artists/{output_dir}/{video_id}.mp4",
+                        output_path=output,
                         stream_url=stream_url,
                         user_agent=user_agent,
                         cf_clearance=get_cf_clearance(),
