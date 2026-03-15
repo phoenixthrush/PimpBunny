@@ -55,6 +55,11 @@ def extract_mp4_links(page: Page, url: str) -> tuple[list[str], str | None]:
     """Get unique downloadable .mp4 URLs and video id from the page."""
     page.goto(url)
 
+    for _ in range(10):
+        if "<title>Just a moment...</title>" in page.content():
+            print("Cloudflare protection detected, waiting 5 seconds...")
+            page.wait_for_timeout(5000)
+
     page.wait_for_timeout(500)
 
     raw_html = html.unescape(page.content())
@@ -189,6 +194,11 @@ def scrape_artist(
             page.goto(page_url)
             page_html = page.content()
 
+            for _ in range(10):
+                if "<title>Just a moment...</title>" in page_html:
+                    print("Cloudflare protection detected, waiting 5 seconds...")
+                    page.wait_for_timeout(5000)
+
         page_links = extract_video_links(page_html)
 
         if not page_links:
@@ -309,6 +319,13 @@ if __name__ == "__main__":
                     stream_response = page.goto(
                         best_mp4.replace("download=true", "download=false")
                     )
+
+                    for _ in range(10):
+                        if "<title>Just a moment...</title>" in page.content():
+                            print(
+                                "Cloudflare protection detected, waiting 5 seconds..."
+                            )
+                            page.wait_for_timeout(5000)
 
                     page.goto("about:blank")
                     page.set_content(f"""<!DOCTYPE html>
