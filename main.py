@@ -3,14 +3,42 @@ Get video links from pimpbunny.com using regex.
 Sequential numbering across pages
 """
 
+import atexit
 import html
 import os
 import re
+import shutil
 import subprocess
 
 from patchright.sync_api import Page, sync_playwright
 
 from download import build_curl_command, get_cf_clearance
+
+PENDING_DIR = "pending"
+
+
+# -----------------------------
+# Pending downloads
+# -----------------------------
+def ensure_pending_dir() -> None:
+    """Create the pending directory if needed."""
+    os.makedirs(PENDING_DIR, exist_ok=True)
+
+
+def clear_pending_dir() -> None:
+    """Delete all files and folders inside pending."""
+    ensure_pending_dir()
+
+    for name in os.listdir(PENDING_DIR):
+        path = os.path.join(PENDING_DIR, name)
+
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+        except OSError as error:
+            print(f"Could not remove pending item: {path} ({error})")
 
 
 # -----------------------------
@@ -248,6 +276,10 @@ def load_netscape_cookies(path: str) -> list[dict]:
 
 # --------- Main ---------
 if __name__ == "__main__":
+    ensure_pending_dir()
+    clear_pending_dir()
+    atexit.register(clear_pending_dir)
+
     artist_list_file = "artists.txt"
 
     with open(artist_list_file, "r", encoding="utf-8") as file:
@@ -313,11 +345,15 @@ if __name__ == "__main__":
                 print(f"\n=== [{index}/{len(video_links)}] Video page: {link} ===")
                 print(f"Video ID: {video_id}")
 
-                output = f"artists/{output_dir}/{video_id}.mp4"
+                final_output = f"artists/{output_dir}/{video_id}.mp4"
+                pending_output = os.path.join(PENDING_DIR, f"{video_id}.mp4")
 
-                if os.path.exists(output):
-                    print(f"File already exists: {output}")
+                if os.path.exists(final_output):
+                    print(f"File already exists: {final_output}")
                     continue
+
+                if os.path.exists(pending_output):
+                    os.remove(pending_output)
 
                 print(f"MP4 URLs: {mp4_urls}")
                 print(f"Best MP4: {best_mp4}")
@@ -456,13 +492,21 @@ if __name__ == "__main__":
                     print("Stream URL:", stream_url)
 
                     command = build_curl_command(
-                        output_path=output,
+                        output_path=pending_output,
                         stream_url=stream_url,
                         user_agent=user_agent,
                         cf_clearance=get_cf_clearance(),
                     )
 
-                    subprocess.run(command, check=False)
+                    result = subprocess.run(command, check=False)
+
+                    if result.returncode == 0 and os.path.exists(pending_output):
+                        os.replace(pending_output, final_output)
+                        print(f"Saved: {final_output}")
+                    else:
+                        print(f"Download failed: {pending_output}")
+                        if os.path.exists(pending_output):
+                            os.remove(pending_output)
 
                 print("-----------------------------")
 
