@@ -7,12 +7,6 @@ https://pimpbunny.com/onlyfans-models/belle-delphine-leaks/
 ...
 ```
 
-Then collect the stream links with:
-
-```bash
-python main.py
-```
-
 After that, download the videos with:
 
 ```bash
