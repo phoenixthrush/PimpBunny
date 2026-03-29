@@ -1,8 +1,3 @@
-"""
-PimpBunny Downloader - Combined Script
-Scrapes video links from pimpbunny.com and downloads them using niquests with a tqdm progress bar.
-"""
-
 import atexit
 import html
 import os
@@ -11,104 +6,132 @@ import shutil
 import sys
 import tempfile
 
-# External HTTP client and progress bar
 import niquests
 from patchright.sync_api import Page, sync_playwright
 from tqdm import tqdm
 
-# ========================= CONFIG =========================
+# -----------------------------
+# config
+# -----------------------------
 PENDING_DIR = "pending"
 ARTISTS_DIR = "artists"
 ARTIST_LIST_FILE = "artists.txt"
 COOKIE_FILE = "cookies.txt"
 USER_AGENT_FILE = "user_agent.txt"
 VIDEOS_PER_PAGE = 128
-# =========================================================
+CLOUDFLARE_TITLE = "<title>Just a moment...</title>"
 
 
 # -----------------------------
-# Pending downloads
+# filesystem
 # -----------------------------
-def ensure_pending_dir() -> None:
-    os.makedirs(PENDING_DIR, exist_ok=True)
+def ensure_dir(path: str) -> None:
+    """Create a directory if needed."""
+    os.makedirs(path, exist_ok=True)
 
 
-def clear_pending_dir() -> None:
-    ensure_pending_dir()
-    for name in os.listdir(PENDING_DIR):
-        path = os.path.join(PENDING_DIR, name)
+def clear_dir(path: str) -> None:
+    """Remove everything inside a directory."""
+    ensure_dir(path)
+
+    for name in os.listdir(path):
+        item_path = os.path.join(path, name)
+
         try:
-            if os.path.isdir(path) and not os.path.islink(path):
-                shutil.rmtree(path)
+            if os.path.isdir(item_path) and not os.path.islink(item_path):
+                shutil.rmtree(item_path)
             else:
-                os.remove(path)
+                os.remove(item_path)
         except OSError as e:
-            print(f"Could not remove pending item: {path} ({e})")
+            print(f"Could not remove: {item_path} ({e})")
+
+
+def read_lines(path: str) -> list[str]:
+    """Read non-empty non-comment lines from a file."""
+    if not os.path.exists(path):
+        return []
+
+    with open(path, "r", encoding="utf-8") as file:
+        return [
+            line.strip()
+            for line in file
+            if line.strip() and not line.strip().startswith("#")
+        ]
+
+
+def write_lines(path: str, lines: list[str]) -> None:
+    """Write lines to a file."""
+    with open(path, "w", encoding="utf-8") as file:
+        for line in lines:
+            file.write(f"{line}\n")
 
 
 # -----------------------------
-# Extraction Functions
+# html parsing
 # -----------------------------
 def extract_video_links(page_html: str) -> list[str]:
+    """Extract video page links."""
     pattern = r'<a[^>]+class="[^"]*ui-card-link[^"]*"[^>]+href="([^"]+)"'
     return re.findall(pattern, page_html)
 
 
 def extract_video_id(page_html: str) -> str | None:
+    """Extract the video id."""
     match = re.search(r"videoId:\s*'(\d+)'", page_html)
     return match.group(1) if match else None
 
 
 def extract_artist_name(page_html: str) -> str | None:
+    """Extract the artist name."""
     match = re.search(r"<h1[^>]*>(.*?)</h1>", page_html, re.DOTALL)
     if not match:
         return None
+
     return html.unescape(match.group(1)).strip()
 
 
 def extract_page_count(page_html: str, artist_url: str) -> int:
-    artist_base = artist_url.rstrip("/").split("/")[-1]
-    pattern = rf'href="[^"]*{artist_base}/(\d+)(?:/)?(?:\?[^"]*)?"[^>]*>(\d+)</a>'
-    nums = [int(num) for _, num in re.findall(pattern, page_html)]
-    return max(nums) if nums else 1
+    """Extract the number of artist pages."""
+    artist_slug = artist_url.rstrip("/").split("/")[-1]
+    pattern = rf'href="[^"]*{artist_slug}/(\d+)(?:/)?(?:\?[^"]*)?"[^>]*>(\d+)</a>'
+    numbers = [int(number) for _, number in re.findall(pattern, page_html)]
+    return max(numbers) if numbers else 1
 
 
-def extract_mp4_links(page: Page, url: str) -> tuple[list[str], str | None]:
-    page.goto(url)
+def extract_mp4_urls(page_html: str) -> list[str]:
+    """Extract valid mp4 urls."""
+    raw_urls = re.findall(r"https?://[^\s'\"]+\.mp4[^\s'\"]*", page_html)
+    unique_by_name: dict[str, str] = {}
 
-    for _ in range(10):
-        if "<title>Just a moment...</title>" in page.content():
-            print("Cloudflare protection detected, waiting 5 seconds...")
-            page.wait_for_timeout(5000)
+    for url in raw_urls:
+        url = url.replace("function/0/", "")
 
-    page.wait_for_timeout(500)
-    raw_html = html.unescape(page.content())
-
-    video_id = extract_video_id(raw_html)
-    urls = re.findall(r"https?://[^\s'\"]+\.mp4[^\s'\"]*", raw_html)
-
-    unique_by_file: dict[str, str] = {}
-
-    for mp4_url in urls:
-        mp4_url = mp4_url.replace("function/0/", "")
-        if "_preview" in mp4_url or ".jpg" in mp4_url or "download=true" not in mp4_url:
+        if "_preview" in url:
+            continue
+        if ".jpg" in url:
+            continue
+        if "download=true" not in url:
             continue
 
-        match = re.search(r"/([^/?]+\.mp4)", mp4_url)
-        if match:
-            file_name = match.group(1)
-            unique_by_file[file_name] = mp4_url
+        match = re.search(r"/([^/?]+\.mp4)", url)
+        if not match:
+            continue
 
-    return list(unique_by_file.values()), video_id
+        file_name = match.group(1)
+        unique_by_name[file_name] = url
+
+    return list(unique_by_name.values())
 
 
 def get_best_quality_mp4(urls: list[str]) -> str | None:
+    """Pick the highest quality mp4 url."""
     best_url = None
     best_quality = -1
 
     for url in urls:
         match = re.search(r"_(\d{3,4})p\.mp4", url)
         quality = int(match.group(1)) if match else 0
+
         if quality > best_quality:
             best_quality = quality
             best_url = url
@@ -117,20 +140,24 @@ def get_best_quality_mp4(urls: list[str]) -> str | None:
 
 
 # -----------------------------
-# Cookie Handling
+# cookies
 # -----------------------------
 def save_cookies_netscape(cookies: list[dict], path: str) -> None:
+    """Save cookies in Netscape format."""
     lines = ["# Netscape HTTP Cookie File"]
+
     for cookie in cookies:
         domain = cookie.get("domain", "")
         include_subdomains = "TRUE" if domain.startswith(".") else "FALSE"
-        path_value = cookie.get("path", "/")
+        cookie_path = cookie.get("path", "/")
         secure = "TRUE" if cookie.get("secure", False) else "FALSE"
-        expires = (
-            int(cookie.get("expires", 0))
-            if cookie.get("expires") not in (-1, None)
-            else 0
-        )
+        expires = cookie.get("expires")
+
+        if expires in (-1, None):
+            expires = 0
+        else:
+            expires = int(expires)
+
         name = cookie.get("name", "")
         value = cookie.get("value", "")
 
@@ -139,7 +166,7 @@ def save_cookies_netscape(cookies: list[dict], path: str) -> None:
                 [
                     domain,
                     include_subdomains,
-                    path_value,
+                    cookie_path,
                     secure,
                     str(expires),
                     name,
@@ -148,22 +175,29 @@ def save_cookies_netscape(cookies: list[dict], path: str) -> None:
             )
         )
 
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    write_lines(path, lines)
 
 
-def load_netscape_cookies(path: str) -> list[dict]:
+def load_cookies_netscape(path: str) -> list[dict]:
+    """Load cookies from Netscape format."""
     cookies: list[dict] = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+
+    if not os.path.exists(path):
+        return cookies
+
+    with open(path, "r", encoding="utf-8") as file:
+        for line in file:
             line = line.strip()
+
             if not line or line.startswith("#"):
                 continue
+
             parts = line.split("\t")
             if len(parts) < 7:
                 continue
 
             domain, _, cookie_path, secure, expires, name, value = parts[:7]
+
             cookie = {
                 "name": name,
                 "value": value,
@@ -171,93 +205,91 @@ def load_netscape_cookies(path: str) -> list[dict]:
                 "path": cookie_path,
                 "secure": secure == "TRUE",
             }
+
             if expires.isdigit():
                 cookie["expires"] = int(expires)
+
             cookies.append(cookie)
+
     return cookies
 
 
 def get_cf_clearance(path: str = COOKIE_FILE) -> str | None:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 7 and parts[5] == "cf_clearance":
-                    return parts[6]
-    except FileNotFoundError:
-        pass
+    """Read cf_clearance from the cookie file."""
+    if not os.path.exists(path):
+        return None
+
+    with open(path, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+
+            if not line or line.startswith("#"):
+                continue
+
+            parts = line.split("\t")
+            if len(parts) >= 7 and parts[5] == "cf_clearance":
+                return parts[6]
+
     return None
 
 
 # -----------------------------
-# Build curl command (kept for compatibility but not used)
+# browser helpers
 # -----------------------------
-def build_curl_command(
-    output_path: str, stream_url: str, user_agent: str, cf_clearance: str | None = None
-) -> list[str]:
-    cmd = [
-        "curl",
-        stream_url,
-        "-H",
-        f"User-Agent: {user_agent}",
-        "-H",
-        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "-H",
-        "Accept-Language: en-US,en;q=0.9",
-        "-H",
-        "Accept-Encoding: gzip, deflate, br, zstd",
-        "-H",
-        "DNT: 1",
-        "-H",
-        "Sec-GPC: 1",
-        "-H",
-        "Connection: keep-alive",
-        "-H",
-        "Upgrade-Insecure-Requests: 1",
-        "-H",
-        "Sec-Fetch-Dest: document",
-        "-H",
-        "Sec-Fetch-Mode: navigate",
-        "-H",
-        "Sec-Fetch-Site: none",
-        "-H",
-        "Sec-Fetch-User: ?1",
-        "-H",
-        "Priority: u=0, i",
-        "-H",
-        "TE: trailers",
-        "-o",
-        output_path,
-        "--fail",
-        "--silent",
-        "--show-error",
-    ]
+def wait_for_cloudflare(page: Page, attempts: int = 10, delay_ms: int = 5000) -> str:
+    """Wait until the Cloudflare page is gone."""
+    page_html = page.content()
 
-    if cf_clearance:
-        cmd.insert(10, "-H")
-        cmd.insert(11, f"Cookie: cf_clearance={cf_clearance}")
+    for _ in range(attempts):
+        if CLOUDFLARE_TITLE not in page_html:
+            break
 
-    return cmd
+        print("Cloudflare protection detected, waiting 5 seconds...")
+        page.wait_for_timeout(delay_ms)
+        page_html = page.content()
+
+    return page_html
+
+
+def open_page(page: Page, url: str) -> str:
+    """Open a page and return the final html."""
+    page.goto(url)
+    return wait_for_cloudflare(page)
+
+
+def save_session_data(page: Page) -> str:
+    """Save browser session cookies and user agent."""
+    user_agent = page.evaluate("() => navigator.userAgent")
+
+    with open(USER_AGENT_FILE, "w", encoding="utf-8") as file:
+        file.write(user_agent)
+
+    cookies = page.context.cookies()
+    save_cookies_netscape(cookies, COOKIE_FILE)
+
+    print(f"Saved user agent to {USER_AGENT_FILE}")
+    print(f"Saved cookies to {COOKIE_FILE}")
+
+    return user_agent
+
+
+def make_page(browser, cookie_path: str) -> Page:
+    """Create a page with optional saved cookies."""
+    if os.path.exists(cookie_path):
+        context = browser.new_context()
+        context.add_cookies(load_cookies_netscape(cookie_path))
+        print("Loaded saved cookies from previous session")
+        return context.new_page()
+
+    print("No cookies.txt found - starting fresh")
+    return browser.new_page()
 
 
 # -----------------------------
-# niquests download helper with tqdm
+# downloads
 # -----------------------------
-def download_with_niquests(
-    stream_url: str,
-    pending_output: str,
-    user_agent: str,
-    cf_clearance: str | None = None,
-    timeout: int = 60,
-) -> bool:
-    """
-    Stream-download stream_url to a temporary file and move to pending_output on success.
-    Shows a tqdm progress bar using Content-Length when available.
-    Returns True on success, False on failure.
-    """
+def build_headers(user_agent: str, cf_clearance: str | None = None) -> dict:
+    """Build request headers."""
     headers = {
         "User-Agent": user_agent,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -278,275 +310,299 @@ def download_with_niquests(
     if cf_clearance:
         headers["Cookie"] = f"cf_clearance={cf_clearance}"
 
-    temp_dir = os.path.dirname(os.path.abspath(pending_output)) or "."
+    return headers
+
+
+def download_file(
+    stream_url: str,
+    output_path: str,
+    user_agent: str,
+    cf_clearance: str | None = None,
+    timeout: int = 60,
+) -> bool:
+    """Download a file to disk."""
+    headers = build_headers(user_agent, cf_clearance)
+    output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
+    file_name = os.path.basename(output_path)
+
     fd, temp_path = tempfile.mkstemp(
-        prefix=os.path.basename(pending_output) + ".", suffix=".temp", dir=temp_dir
+        prefix=f"{file_name}.",
+        suffix=".temp",
+        dir=output_dir,
     )
     os.close(fd)
 
     try:
         with niquests.get(
-            stream_url, headers=headers, stream=True, timeout=timeout
-        ) as resp:
-            try:
-                resp.raise_for_status()
-            except Exception as e:
-                print(f"HTTP error while downloading {stream_url}: {e}")
-                return False
+            stream_url,
+            headers=headers,
+            stream=True,
+            timeout=timeout,
+        ) as response:
+            response.raise_for_status()
 
-            # Try to get total size for tqdm
-            total = None
-            content_length = resp.headers.get("Content-Length") or resp.headers.get(
-                "content-length"
+            content_length = response.headers.get(
+                "Content-Length"
+            ) or response.headers.get("content-length")
+            total = (
+                int(content_length)
+                if content_length and content_length.isdigit()
+                else None
             )
-            if content_length and content_length.isdigit():
-                total = int(content_length)
 
-            chunk_size = 8192
-            with open(temp_path, "wb") as out_f:
-                if total:
-                    with tqdm(
-                        total=total,
-                        unit="B",
-                        unit_scale=True,
-                        unit_divisor=1024,
-                        desc=os.path.basename(pending_output),
-                        leave=True,
-                    ) as pbar:
-                        for chunk in resp.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                out_f.write(chunk)
-                                pbar.update(len(chunk))
-                else:
-                    # Unknown total size: use indeterminate progress bar
-                    with tqdm(
-                        unit="B",
-                        unit_scale=True,
-                        unit_divisor=1024,
-                        desc=os.path.basename(pending_output),
-                        leave=True,
-                    ) as pbar:
-                        for chunk in resp.iter_content(chunk_size=chunk_size):
-                            if chunk:
-                                out_f.write(chunk)
-                                pbar.update(len(chunk))
+            with open(temp_path, "wb") as file:
+                with tqdm(
+                    total=total,
+                    unit="B",
+                    unit_scale=True,
+                    unit_divisor=1024,
+                    desc=file_name,
+                    leave=True,
+                ) as progress:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if not chunk:
+                            continue
 
-        os.replace(temp_path, pending_output)
+                        file.write(chunk)
+                        progress.update(len(chunk))
+
+        os.replace(temp_path, output_path)
         return True
 
     except Exception as e:
         print(f"Download failed for {stream_url}: {e}")
+
         if os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except OSError:
                 pass
+
         return False
 
 
 # -----------------------------
-# Scraping
+# scraping
 # -----------------------------
+def get_artist_page_url(artist_url: str, page_number: int, per_page: int) -> str:
+    """Build an artist page url."""
+    base = artist_url.rstrip("/")
+
+    if page_number == 1:
+        return f"{base}/?videos_per_page={per_page}"
+
+    return f"{base}/{page_number}/?videos_per_page={per_page}"
+
+
 def scrape_artist(
     page: Page, artist_url: str, per_page: int = VIDEOS_PER_PAGE
 ) -> tuple[list[str], str | None]:
+    """Scrape all video links for one artist."""
     all_links: list[str] = []
 
-    first_url = f"{artist_url.rstrip('/')}/?videos_per_page={per_page}"
-    page.goto(first_url)
-
-    for _ in range(10):
-        if "<title>Just a moment...</title>" in page.content():
-            print("Cloudflare protection detected, waiting 5 seconds...")
-            page.wait_for_timeout(5000)
-
-    first_html = page.content()
+    first_html = open_page(page, get_artist_page_url(artist_url, 1, per_page))
     artist_name = extract_artist_name(first_html)
     page_count = extract_page_count(first_html, artist_url)
 
     print(f"Found {page_count} page(s) for artist")
-
-    # Save user agent and cookies
-    user_agent = page.evaluate("() => navigator.userAgent")
-    with open(USER_AGENT_FILE, "w", encoding="utf-8") as f:
-        f.write(user_agent)
-    print(f"Saved user agent to {USER_AGENT_FILE}")
-
-    cookies = page.context.cookies()
-    save_cookies_netscape(cookies, COOKIE_FILE)
-    print(f"Saved cookies to {COOKIE_FILE}")
+    save_session_data(page)
 
     counter = 1
-    for page_num in range(1, page_count + 1):
-        print(f"\n--- Page {page_num}/{page_count} ---")
 
-        if page_num == 1:
+    for page_number in range(1, page_count + 1):
+        print(f"\n--- Page {page_number}/{page_count} ---")
+
+        if page_number == 1:
             page_html = first_html
         else:
-            page_url = (
-                f"{artist_url.rstrip('/')}/{page_num}/?videos_per_page={per_page}"
-            )
-            page.goto(page_url)
-            page_html = page.content()
-
-            for _ in range(10):
-                if "<title>Just a moment...</title>" in page_html:
-                    print("Cloudflare protection detected, waiting 5 seconds...")
-                    page.wait_for_timeout(5000)
+            page_url = get_artist_page_url(artist_url, page_number, per_page)
+            page_html = open_page(page, page_url)
 
         page_links = extract_video_links(page_html)
+
         if not page_links:
             print("No links found on this page")
             continue
 
-        for href in page_links:
-            print(f"{counter:04d}. {href}")
-            all_links.append(href)
+        for link in page_links:
+            print(f"{counter:04d}. {link}")
+            all_links.append(link)
             counter += 1
 
-    return all_links, artist_name
+    return list(dict.fromkeys(all_links)), artist_name
+
+
+def extract_video_download(page: Page, video_url: str) -> tuple[str | None, str | None]:
+    """Extract the best downloadable mp4 for a video."""
+    raw_html = html.unescape(open_page(page, video_url))
+    video_id = extract_video_id(raw_html)
+    mp4_urls = extract_mp4_urls(raw_html)
+    best_mp4 = get_best_quality_mp4(mp4_urls)
+    return video_id, best_mp4
+
+
+def resolve_stream_url(page: Page, mp4_url: str) -> str:
+    """Resolve the final stream url."""
+    response = page.goto(mp4_url.replace("download=true", "download=false"))
+    wait_for_cloudflare(page)
+    return response.url if response else mp4_url
+
+
+def show_download_screen(page: Page, video_id: str | None) -> None:
+    """Show a simple status page."""
+    page.goto("about:blank")
+    page.set_content(
+        f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Downloading...</title>
+<style>
+body {{
+    background: #1a0033;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding-top: 100px;
+}}
+</style>
+</head>
+<body>
+    <h1>PimpBunny Downloader</h1>
+    <p>Downloading video {video_id or "unknown"}...</p>
+</body>
+</html>"""
+    )
 
 
 # -----------------------------
-# Main Function
+# artist processing
+# -----------------------------
+def process_artist(page: Page, artist_url: str, user_agent: str) -> None:
+    """Process one artist."""
+    artist_slug = artist_url.rstrip("/").split("/")[-1]
+
+    print(f"\n\n{'#' * 60}\nScraping: {artist_url}\n{'#' * 60}")
+
+    video_links, artist_name = scrape_artist(page, artist_url)
+
+    if artist_name == "Page Not Found":
+        print(f"Skipping {artist_url} - Page Not Found")
+        return
+
+    folder_name = (artist_name or artist_slug).strip()
+    artist_dir = os.path.join(ARTISTS_DIR, folder_name)
+    ensure_dir(artist_dir)
+
+    links_file = os.path.join(artist_dir, "_links.txt")
+    rows: list[tuple[str, str]] = []
+
+    print(f"\n########## Processing {folder_name} ##########")
+
+    for index, video_url in enumerate(video_links, start=1):
+        print(f"\n[{index}/{len(video_links)}] Processing: {video_url}")
+
+        video_id, best_mp4 = extract_video_download(page, video_url)
+
+        if not video_id:
+            print("Could not find video id.")
+            continue
+
+        if not best_mp4:
+            print("No valid MP4 link found for this video.")
+            continue
+
+        final_output = os.path.join(artist_dir, f"{video_id}.mp4")
+        pending_output = os.path.join(PENDING_DIR, f"{video_id}.mp4")
+
+        if os.path.exists(final_output):
+            print(f"Already downloaded: {final_output}")
+            continue
+
+        print(f"Best quality MP4: {best_mp4}")
+
+        stream_url = resolve_stream_url(page, best_mp4)
+        rows.append((video_id, stream_url))
+
+        show_download_screen(page, video_id)
+
+        cf_clearance = get_cf_clearance()
+        print(
+            "Downloading with niquests..."
+            + (" (with cf_clearance)" if cf_clearance else " (no cf_clearance)")
+        )
+
+        success = download_file(
+            stream_url=stream_url,
+            output_path=pending_output,
+            user_agent=user_agent,
+            cf_clearance=cf_clearance,
+        )
+
+        if success and os.path.exists(pending_output):
+            os.replace(pending_output, final_output)
+            print(f"✓ Saved: {final_output}")
+        else:
+            print(f"✗ Download failed for {video_id}")
+            if os.path.exists(pending_output):
+                try:
+                    os.remove(pending_output)
+                except OSError:
+                    pass
+
+    with open(links_file, "w", encoding="utf-8") as file:
+        seen: dict[str, str] = dict.fromkeys(rows)
+        for video_id, stream_url in seen:
+            file.write(f"{video_id}\t{stream_url}\n")
+
+    print(f"\nFinished {folder_name} — Saved {len(rows)} videos.")
+
+
+# -----------------------------
+# setup
+# -----------------------------
+def load_artist_urls(path: str) -> list[str]:
+    """Load and sort artist urls."""
+    urls = sorted(set(read_lines(path)), key=str.lower)
+    write_lines(path, urls)
+    return urls
+
+
+def build_page(browser) -> Page:
+    """Build a browser page."""
+    return make_page(browser, COOKIE_FILE)
+
+
+# -----------------------------
+# main
 # -----------------------------
 def main() -> None:
-    ensure_pending_dir()
-    clear_pending_dir()
-    atexit.register(clear_pending_dir)
+    """Run the downloader."""
+    ensure_dir(PENDING_DIR)
+    clear_dir(PENDING_DIR)
+    atexit.register(lambda: clear_dir(PENDING_DIR))
 
     if not os.path.exists(ARTIST_LIST_FILE):
         print(f"Error: {ARTIST_LIST_FILE} not found!")
         sys.exit(1)
 
-    with open(ARTIST_LIST_FILE, "r", encoding="utf-8") as f:
-        artist_urls = sorted(
-            {
-                line.strip()
-                for line in f
-                if line.strip() and not line.strip().startswith("#")
-            },
-            key=str.lower,
-        )
+    artist_urls = load_artist_urls(ARTIST_LIST_FILE)
 
-    with open(ARTIST_LIST_FILE, "w", encoding="utf-8") as f:
-        for url in artist_urls:
-            f.write(f"{url}\n")
-
-    with sync_playwright() as p:
+    with sync_playwright() as playwright:
         try:
-            browser = p.chromium.launch(headless=True, args=["--mute-audio"])
+            browser = playwright.chromium.launch(headless=True, args=["--mute-audio"])
         except Exception:
             print(
-                "Failed to launch browser. Try running with:\n   xvfb-run python pimpbunny_downloader.py"
+                "Failed to launch browser. Try running with:\n"
+                "   xvfb-run python pimpbunny_downloader.py"
             )
             sys.exit(1)
 
-        # Load cookies if available
-        if os.path.exists(COOKIE_FILE):
-            context = browser.new_context()
-            cookies = load_netscape_cookies(COOKIE_FILE)
-            context.add_cookies(cookies)
-            page = context.new_page()
-            print("Loaded saved cookies from previous session")
-        else:
-            page = browser.new_page()
-            print("No cookies.txt found - starting fresh")
-
+        page = build_page(browser)
         user_agent = page.evaluate("() => navigator.userAgent")
 
         for artist_url in artist_urls:
-            artist_slug = artist_url.rstrip("/").split("/")[-1]
-            print(f"\n\n{'#' * 60}\nScraping: {artist_url}\n{'#' * 60}")
-
-            video_links, artist_name = scrape_artist(page, artist_url)
-            video_links = list(dict.fromkeys(video_links))
-
-            if artist_name == "Page Not Found":
-                print(f"Skipping {artist_url} - Page Not Found")
-                continue
-
-            output_dir = (artist_name or artist_slug).strip()
-            artist_folder = os.path.join(ARTISTS_DIR, output_dir)
-            os.makedirs(artist_folder, exist_ok=True)
-
-            links_file = os.path.join(artist_folder, "_links.txt")
-
-            print(f"\n########## Processing {output_dir} ##########")
-
-            rows: list[tuple[str, str]] = []
-
-            for index, link in enumerate(video_links, start=1):
-                print(f"\n[{index}/{len(video_links)}] Processing: {link}")
-
-                mp4_urls, video_id = extract_mp4_links(page, link)
-                best_mp4 = get_best_quality_mp4(mp4_urls)
-
-                final_output = os.path.join(artist_folder, f"{video_id}.mp4")
-                pending_output = os.path.join(PENDING_DIR, f"{video_id}.mp4")
-
-                if os.path.exists(final_output):
-                    print(f"Already downloaded: {final_output}")
-                    continue
-
-                if not best_mp4:
-                    print("No valid MP4 link found for this video.")
-                    continue
-
-                print(f"Best quality MP4: {best_mp4}")
-
-                # Stream setup
-                stream_response = page.goto(
-                    best_mp4.replace("download=true", "download=false")
-                )
-                for _ in range(10):
-                    if "<title>Just a moment...</title>" in page.content():
-                        print("Cloudflare detected during streaming, waiting...")
-                        page.wait_for_timeout(5000)
-
-                page.goto("about:blank")
-                page.set_content(f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>Downloading...</title>
-<style>body{{background:#1a0033;color:white;font-family:Arial;text-align:center;padding-top:100px;}}</style>
-</head><body>
-<h1>PimpBunny Downloader</h1>
-<p>Downloading video {video_id}...</p>
-</body></html>""")
-
-                stream_url = stream_response.url if stream_response else best_mp4
-                rows.append((video_id or "", stream_url))
-
-                cf_clearance = get_cf_clearance()
-
-                print(
-                    "Downloading with niquests..."
-                    + (" (with cf_clearance)" if cf_clearance else " (no cf_clearance)")
-                )
-
-                success = download_with_niquests(
-                    stream_url=stream_url,
-                    pending_output=pending_output,
-                    user_agent=user_agent,
-                    cf_clearance=cf_clearance,
-                )
-
-                if success and os.path.exists(pending_output):
-                    os.replace(pending_output, final_output)
-                    print(f"✓ Saved: {final_output}")
-                else:
-                    print(f"✗ Download failed for {video_id}")
-                    if os.path.exists(pending_output):
-                        try:
-                            os.remove(pending_output)
-                        except OSError:
-                            pass
-
-            # Save links file
-            with open(links_file, "w", encoding="utf-8") as f:
-                for vid, url in dict.fromkeys(rows):
-                    f.write(f"{vid}\t{url}\n")
-
-            print(f"\nFinished {output_dir} — Saved {len(rows)} videos.")
+            process_artist(page, artist_url, user_agent)
 
         print("\nAll artists processed!")
         browser.close()
