@@ -123,20 +123,30 @@ def extract_mp4_urls(page_html: str) -> list[str]:
     return list(unique_by_name.values())
 
 
-def get_best_quality_mp4(urls: list[str]) -> str | None:
-    """Pick the highest quality mp4 url."""
-    best_url = None
-    best_quality = -1
+def get_best_quality_mp4(
+    urls: list[str],
+    cap_at_1080p: bool = True,
+) -> str | None:
+    """Pick the highest quality mp4."""
+    candidates: list[tuple[int, str]] = []
 
     for url in urls:
         match = re.search(r"_(\d{3,4})p\.mp4", url)
-        quality = int(match.group(1)) if match else 0
+        if not match:
+            continue
 
-        if quality > best_quality:
-            best_quality = quality
-            best_url = url
+        quality = int(match.group(1))
 
-    return best_url
+        if cap_at_1080p and quality > 1080:
+            continue
+
+        candidates.append((quality, url))
+
+    if not candidates:
+        return None
+
+    candidates.sort()
+    return candidates[-1][1]
 
 
 # -----------------------------
