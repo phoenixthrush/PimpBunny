@@ -110,8 +110,6 @@ def extract_mp4_urls(page_html: str) -> list[str]:
             continue
         if ".jpg" in url:
             continue
-        if "download=true" not in url:
-            continue
 
         match = re.search(r"/([^/?]+\.mp4)", url)
         if not match:
@@ -298,7 +296,7 @@ def make_page(browser, cookie_path: str) -> Page:
 # -----------------------------
 # downloads
 # -----------------------------
-def build_headers(user_agent: str, cf_clearance: str | None = None) -> dict:
+def build_headers(user_agent: str, cookies: list[dict] | None = None) -> dict:
     """Build request headers."""
     headers = {
         "User-Agent": user_agent,
@@ -317,8 +315,8 @@ def build_headers(user_agent: str, cf_clearance: str | None = None) -> dict:
         "TE": "trailers",
     }
 
-    if cf_clearance:
-        headers["Cookie"] = f"cf_clearance={cf_clearance}"
+    if cookies:
+        headers["Cookie"] = "; ".join(f"{c['name']}={c['value']}" for c in cookies)
 
     return headers
 
@@ -327,11 +325,11 @@ def download_file(
     stream_url: str,
     output_path: str,
     user_agent: str,
-    cf_clearance: str | None = None,
+    cookies: list[dict] | None = None,
     timeout: int = 60,
 ) -> bool:
     """Download a file to disk."""
-    headers = build_headers(user_agent, cf_clearance)
+    headers = build_headers(user_agent, cookies)
     output_dir = os.path.dirname(os.path.abspath(output_path)) or "."
     file_name = os.path.basename(output_path)
 
@@ -446,6 +444,19 @@ def extract_video_download(page: Page, video_url: str) -> tuple[str | None, str 
     """Extract the best downloadable mp4 for a video."""
     raw_html = html.unescape(open_page(page, video_url))
     video_id = extract_video_id(raw_html)
+
+    # Get the video src set by JS on the <video> element (has valid token)
+    video_src = page.evaluate('() => document.querySelector("video")?.src || ""')
+
+    if not video_src:
+        page.wait_for_timeout(3000)
+        video_src = page.evaluate('() => document.querySelector("video")?.src || ""')
+        video_id = video_id or extract_video_id(html.unescape(page.content()))
+
+    if video_src:
+        return video_id, video_src
+
+    # Fallback: extract from page HTML
     mp4_urls = extract_mp4_urls(raw_html)
     best_mp4 = get_best_quality_mp4(mp4_urls)
     return video_id, best_mp4
@@ -453,9 +464,9 @@ def extract_video_download(page: Page, video_url: str) -> tuple[str | None, str 
 
 def resolve_stream_url(page: Page, mp4_url: str) -> str:
     """Resolve the final stream url."""
-    response = page.goto(mp4_url.replace("download=true", "download=false"))
-    wait_for_cloudflare(page)
-    return response.url if response else mp4_url
+    response = page.request.head(mp4_url, max_redirects=0)
+    location = response.headers.get("location")
+    return location if location else mp4_url
 
 
 def show_download_screen(page: Page, video_id: str | None) -> None:
@@ -536,17 +547,14 @@ def process_artist(page: Page, artist_url: str, user_agent: str) -> None:
 
         show_download_screen(page, video_id)
 
-        cf_clearance = get_cf_clearance()
-        print(
-            "Downloading with niquests..."
-            + (" (with cf_clearance)" if cf_clearance else " (no cf_clearance)")
-        )
+        cookies = page.context.cookies()
+        print("Downloading with niquests...")
 
         success = download_file(
             stream_url=stream_url,
             output_path=pending_output,
             user_agent=user_agent,
-            cf_clearance=cf_clearance,
+            cookies=cookies,
         )
 
         if success and os.path.exists(pending_output):
